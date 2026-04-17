@@ -2,7 +2,7 @@
 title Mbembembe Downloader
 color 0A
 
-:: ===== USER INPUT =====
+:: ====== USER INPUT ======
 set /p url="Paste Video or Playlist URL: "
 
 echo.
