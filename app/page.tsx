@@ -1,13 +1,12 @@
 "use client";
 
 import {
-  startTransition,
-  useCallback,
   useEffect,
   useState,
   useRef,
 } from "react";
 import { Download, Terminal, Activity, ArrowRight, Settings2 } from "lucide-react";
+import { toast } from "sonner";
 
 type QualityOption = {
   value: "360" | "480" | "720";
@@ -103,42 +102,71 @@ export default function Home() {
     window.history.replaceState(null, "", nextQuery ? `/?${nextQuery}` : "/");
   }, [activeJobId, didHydrate, quality, shutdownAfterDownload, url]);
 
-  const refreshJobs = useCallback(async () => {
-    try {
-      const response = await fetch("/api/downloads", { cache: "no-store" });
-      if (!response.ok) return;
-      const data = await response.json() as { jobs: DownloadJob[] };
-      startTransition(() => {
-        setJobs(data.jobs);
-        setActiveJobId((current) => current && data.jobs.some(j => j.id === current) ? current : data.jobs[0]?.id ?? null);
-      });
-    } catch {}
-  }, []);
+  useEffect(() => {
+    const es = new EventSource("/api/downloads/stream");
+    let isMounted = true;
+    
+    es.onmessage = (event) => {
+      if (!isMounted) return;
+      try {
+        const data = JSON.parse(event.data);
+        if (data.jobs) {
+          setJobs(currentJobs => {
+            data.jobs.forEach((newJob: DownloadJob) => {
+               const oldJob = currentJobs.find(j => j.id === newJob.id);
+               if (oldJob && oldJob.status !== newJob.status) {
+                 if (newJob.status === 'succeeded') toast.success(`Job completed!`, { description: newJob.url });
+                 if (newJob.status === 'failed') toast.error(`Job failed!`, { description: newJob.errorMessage || newJob.url });
+               }
+            });
+            return data.jobs;
+          });
+          
+          setActiveJobId((current) => {
+            if (!current && data.jobs.length > 0) return data.jobs[0].id;
+            if (current && !data.jobs.some((j: DownloadJob) => j.id === current)) return data.jobs[0]?.id ?? null;
+            return current;
+          });
+        }
+      } catch {}
+    };
 
-  const refreshActiveJob = useCallback(async (jobId: string) => {
-    try {
-      const response = await fetch(`/api/downloads/${jobId}`, { cache: "no-store" });
-      if (!response.ok) return;
-      const data = await response.json() as { job: DownloadJob; logTail: string };
-      startTransition(() => {
-        setJobs((current) => current.map((job) => (job.id === data.job.id ? data.job : job)));
-        setActiveLogTail(data.logTail);
-      });
-    } catch {}
+    return () => {
+      isMounted = false;
+      es.close();
+    };
   }, []);
 
   useEffect(() => {
-    refreshJobs();
-    const timer = window.setInterval(refreshJobs, 5000);
-    return () => window.clearInterval(timer);
-  }, [refreshJobs]);
+    if (!activeJobId) {
+      setActiveLogTail("");
+      return;
+    }
+    
+    let isMounted = true;
+    const es = new EventSource(`/api/downloads/${activeJobId}/stream`);
+    
+    es.addEventListener("init", (event) => {
+      if (!isMounted) return;
+      try {
+        const data = JSON.parse(event.data);
+        setActiveLogTail(data.text || "");
+      } catch {}
+    });
 
-  useEffect(() => {
-    if (!activeJobId) { setActiveLogTail(""); return; }
-    refreshActiveJob(activeJobId);
-    const timer = window.setInterval(() => refreshActiveJob(activeJobId), 5000);
-    return () => window.clearInterval(timer);
-  }, [activeJobId, refreshActiveJob]);
+    es.addEventListener("chunk", (event) => {
+      if (!isMounted) return;
+      try {
+        const data = JSON.parse(event.data);
+        setActiveLogTail(prev => prev + (data.text || ""));
+      } catch {}
+    });
+
+    return () => {
+      isMounted = false;
+      es.close();
+    };
+  }, [activeJobId]);
 
   const windowState = now ? getWindowState(now) : null;
   const activeJob = jobs.find((job) => job.id === activeJobId) ?? null;
@@ -162,9 +190,8 @@ export default function Home() {
       const data = await response.json() as { error?: string; job?: DownloadJob; };
       if (!response.ok || !data.job) { setSubmitError(data.error ?? "Failed via API."); return; }
       setActiveJobId(data.job.id);
-      refreshJobs();
-      refreshActiveJob(data.job.id);
       setUrl("");
+      toast.info("Job queued successfully", { description: trimmedUrl });
     } catch {
       setSubmitError("API unreachable.");
     } finally {

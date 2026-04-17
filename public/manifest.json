@@ -1,0 +1,16 @@
+{
+  "name": "Mbembembe Downloader",
+  "short_name": "Mbembembe",
+  "description": "Nightly bandwidth automation dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#060606",
+  "theme_color": "#060606",
+  "icons": [
+    {
+      "src": "https://upload.wikimedia.org/wikipedia/commons/4/4f/Simple_light_bulb_icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

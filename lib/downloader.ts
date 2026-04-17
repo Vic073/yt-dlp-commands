@@ -1,8 +1,11 @@
-import { createWriteStream } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { createWriteStream, readFileSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
+
+export const systemEmitter = new EventEmitter();
 
 export type DownloadQuality = "360" | "480" | "720";
 export type DownloadStatus =
@@ -40,20 +43,32 @@ const JS_RUNTIMES = "node";
 const OUTPUT_TEMPLATE =
   "%(playlist_title,Unknown)s/%(playlist_index,1)s - %(title)s.%(ext)s";
 
-function getState() {
-  const globalState = globalThis as typeof globalThis & {
-    __mbembembeDownloaderState?: {
-      jobs: Map<string, DownloadJobRecord>;
-    };
-  };
+const DB_FILE = join(process.cwd(), "downloads", "jobs.json");
+let jobsCache: Map<string, DownloadJobRecord> | null = null;
 
-  if (!globalState.__mbembembeDownloaderState) {
-    globalState.__mbembembeDownloaderState = {
-      jobs: new Map<string, DownloadJobRecord>(),
-    };
+function getState() {
+  if (jobsCache) return { jobs: jobsCache };
+
+  try {
+    const raw = readFileSync(DB_FILE, "utf8");
+    jobsCache = new Map(JSON.parse(raw));
+
+    for (const [id, job] of jobsCache.entries()) {
+      if (job.status === "running") {
+        job.status = "failed";
+        job.errorMessage = "Server restarted unexpectedly.";
+        job.finishedAt = new Date().toISOString();
+      }
+      job.runnerStarted = false;
+      if (job.status === "queued" || job.status === "waiting") {
+        void runDownload(id).catch(() => {});
+      }
+    }
+  } catch {
+    jobsCache = new Map();
   }
 
-  return globalState.__mbembembeDownloaderState;
+  return { jobs: jobsCache };
 }
 
 function isMbembembeHours(now: Date) {
@@ -124,6 +139,15 @@ function updateJob(id: string, patch: Partial<DownloadJobRecord>) {
   };
 
   jobs.set(id, updated);
+  
+  // Persist to disk asynchronously
+  void mkdir(join(process.cwd(), "downloads"), { recursive: true })
+    .then(() => writeFile(DB_FILE, JSON.stringify(Array.from(jobs.entries())), "utf8"))
+    .catch(() => {});
+
+  systemEmitter.emit(`job-${id}`, updated);
+  systemEmitter.emit('job-updated', updated);
+
   return updated;
 }
 
@@ -244,15 +268,20 @@ async function runDownload(jobId: string) {
 
     child.stdout.on("data", (chunk) => {
       logStream.write(chunk);
+      systemEmitter.emit(`log-${jobId}`, chunk.toString("utf8"));
     });
 
     child.stderr.on("data", (chunk) => {
       logStream.write(chunk);
+      systemEmitter.emit(`log-${jobId}`, chunk.toString("utf8"));
     });
 
     child.on("error", async (error) => {
-      logStream.write(`${error.message}\n`);
+      const msg = `${error.message}\n`;
+      logStream.write(msg);
+      systemEmitter.emit(`log-${jobId}`, msg);
       logStream.end();
+
       updateJob(jobId, {
         status: "failed",
         finishedAt: new Date().toISOString(),
@@ -266,7 +295,9 @@ async function runDownload(jobId: string) {
     });
 
     child.on("close", async (code) => {
-      logStream.write(`\nProcess exited with code ${code ?? "unknown"}.\n`);
+      const closeMsg = `\nProcess exited with code ${code ?? "unknown"}.\n`;
+      logStream.write(closeMsg);
+      systemEmitter.emit(`log-${jobId}`, closeMsg);
       logStream.end();
 
       const succeeded = code === 0;
