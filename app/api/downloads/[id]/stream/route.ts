@@ -1,10 +1,13 @@
 import { getDownloadJob, readJobLogTail, systemEmitter } from "@/lib/downloader";
+import { NextRequest } from 'next/server';
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request, context: { params: { id: string } }) {
-  const id = context.params.id;
+// Changed context.params to a Promise to match Next.js 15+ requirements
+export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  // Await the params before accessing the id
+  const { id } = await context.params;
   const job = getDownloadJob(id);
 
   if (!job) {
