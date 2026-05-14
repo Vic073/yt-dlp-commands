@@ -7,6 +7,7 @@ import {
 } from "react";
 import { Download, Terminal, Activity, ArrowRight, Settings2 } from "lucide-react";
 import { toast } from "sonner";
+import LogViewer from "@/components/LogViewer";
 
 type QualityOption = {
   value: "360" | "480" | "720";
@@ -299,26 +300,7 @@ export default function Home() {
         <div className="flex flex-col space-y-6 h-[70vh] lg:h-auto">
           
           {/* Scrollable Log Output */}
-          <section className="flex-1 flex flex-col border border-border rounded-md overflow-hidden bg-card/10">
-            <div className="px-4 py-3 border-b border-border bg-card flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Terminal className="w-4 h-4 text-muted-foreground" />
-                <span className="text-[13px] font-medium text-foreground tracking-wide uppercase">Runtime Log</span>
-              </div>
-              {activeJob && (
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded border border-border bg-background">
-                  <Activity className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[11px] font-mono font-medium text-muted-foreground">{activeJob.status}</span>
-                </div>
-              )}
-            </div>
-            
-            <div className="flex-1 overflow-y-auto bg-[#0a0a0c] p-4">
-              <pre className="text-[12px] leading-[1.6] font-mono text-muted-foreground whitespace-pre-wrap word-break">
-                <code>{activeLogTail || "Standby... Terminal output will connect when a job is selected."}</code>
-              </pre>
-            </div>
-          </section>
+          <LogViewer logs={activeLogTail.split("\n").filter(line => line.length > 0)} />
 
           {/* Queue List */}
           <section className="border border-border rounded-md overflow-hidden bg-card/10">
